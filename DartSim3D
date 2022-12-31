@@ -1,0 +1,96 @@
+%All angles in radians, units in mkgs
+clear all
+%Import reference results from Solidworks Fluid Simulation:
+load 3DSimulationData.mat
+%Roll neglected
+
+%Domain of Simulation Data Inputs (dart-centric basis X left, Y up, Z forward)
+DomVelocityX=linspace(2,-2,6);
+DomVelocityY=linspace(2,-2,6);
+DomVelocityZ=linspace(16,4,5);
+
+%reshape results to matrix 
+RefForceX=permute(reshape(ParametricStudy{6,:},[length(DomVelocityZ),length(DomVelocityY),length(DomVelocityX)]),[3,2,1]);
+RefForceY=permute(reshape(ParametricStudy{4,:},[length(DomVelocityZ),length(DomVelocityY),length(DomVelocityX)]),[3,2,1]);
+RefForceZ=permute(reshape(ParametricStudy{5,:},[length(DomVelocityZ),length(DomVelocityY),length(DomVelocityX)]),[3,2,1]);
+RefPitchAngularAcceleration=permute(reshape(-ParametricStudy{8,:},[length(DomVelocityZ),length(DomVelocityY),length(DomVelocityX)]),[3,2,1]); %Subtract results because the angular reference frame of the solidworks sim is reverse of the matlab sim
+RefYawAngularAcceleration=permute(reshape(ParametricStudy{7,:},[length(DomVelocityZ),length(DomVelocityY),length(DomVelocityX)]),[3,2,1]);
+
+%Starting conditions
+PitchAngle=0.5; %Angle of longitudinal axis of dart with respect to ground
+YawAngle=0.2; %Angle of longitudinal axis of dart with respect to the wall
+PitchAngularVelocity=0;
+PitchAngularAcceleration=0;
+YawAngularVelocity=0;
+YawAngularAcceleration=0;
+Position=[0;0.7;0];
+DBVelocity=[0;0;12]; %Dart Basis velocity-> Z is along longitudinal axis of dart
+Gravity=[0;-9.8083;0]; %Local gravitational acceleration for Seattle, WA
+Velocity=DartBasisToWorldBasis(DBVelocity,PitchAngle,YawAngle);
+Mass=.232;
+Timestep=0.0001;
+Time=0;
+
+figure
+
+j=1;
+while Position(2)>0       
+
+    PlotPosition(j,:)=Position;
+
+    %Simulation
+    DartBasisX=-[cos(YawAngle);0;-sin(YawAngle)]./norm([cos(YawAngle);0;sin(YawAngle)]);
+    DartBasisZ=[sin(YawAngle);sin(PitchAngle);cos(PitchAngle)]./norm([sin(YawAngle);sin(PitchAngle);cos(PitchAngle)]);
+    DartBasisY=cross(DartBasisX,DartBasisZ);
+    
+    DBAeroForceX=interp3(DomVelocityX,DomVelocityY,DomVelocityZ,RefForceX,DBVelocity(1),DBVelocity(2),DBVelocity(3),'spline',NaN); %Interpolate the query point into your reference data set
+    DBAeroForceY=interp3(DomVelocityX,DomVelocityY,DomVelocityZ,RefForceY,DBVelocity(1),DBVelocity(2),DBVelocity(3),'spline',NaN);
+    DBAeroForceZ=interp3(DomVelocityX,DomVelocityY,DomVelocityZ,RefForceZ,DBVelocity(1),DBVelocity(2),DBVelocity(3),'spline',NaN);
+    DBAeroForce=[DBAeroForceX;DBAeroForceY;DBAeroForceZ];
+    PitchAngularAcceleration=interp3(DomVelocityX,DomVelocityY,DomVelocityZ,RefPitchAngularAcceleration,DBVelocity(1),DBVelocity(2),DBVelocity(3),'spline',NaN);
+    YawAngularAcceleration=interp3(DomVelocityX,DomVelocityY,DomVelocityZ,RefYawAngularAcceleration,DBVelocity(1),DBVelocity(2),DBVelocity(3),'spline',NaN);
+    AeroForce=DartBasisToWorldBasis(DBAeroForce,PitchAngle,YawAngle);
+    Acceleration=Gravity+(AeroForce./Mass);
+    Position=Position+Velocity.*Timestep+0.5.*Acceleration.*(Timestep^2);
+    Velocity=Velocity+Acceleration.*Timestep;
+    DBVelocity=WorldBasisToDartBasis(Velocity,PitchAngle,YawAngle);
+    PitchAngle=PitchAngle+PitchAngularVelocity*Timestep+0.5*PitchAngularAcceleration*(Timestep^2);
+    PitchAngularVelocity=PitchAngularVelocity+PitchAngularAcceleration*Timestep;
+    YawAngle=YawAngle+YawAngularVelocity*Timestep+0.5*YawAngularAcceleration*(Timestep^2);
+    YawAngularVelocity=YawAngularVelocity+YawAngularAcceleration*Timestep;
+
+    Misalignment=(Velocity/norm(Velocity))-DartBasisZ;
+    Time=Time+Timestep;
+
+    j=j+1; %increment iteration var
+
+    if mod(j,500)==1
+        plot3([Position(1),Position(1)+DartBasisX(1)],[Position(3),Position(3)+DartBasisX(3)],[Position(2),Position(2)+DartBasisX(2)],'yellow')
+        hold on
+        plot3([Position(1),Position(1)+DartBasisY(1)],[Position(3),Position(3)+DartBasisY(3)],[Position(2),Position(2)+DartBasisY(2)],'red')
+        plot3([Position(1),Position(1)+DartBasisZ(1)],[Position(3),Position(3)+DartBasisZ(3)],[Position(2),Position(2)+DartBasisZ(2)],'green')
+        disp([DartBasisX,DartBasisY,DartBasisZ])
+    end
+end
+
+plot3(PlotPosition(:,1),PlotPosition(:,3),PlotPosition(:,2), 'blue')
+xlabel('X Position(m)') 
+ylabel('Y Position (m)') 
+axis equal
+
+%Convert world basis vector to dart basis
+function f = WorldBasisToDartBasis(WorldBasisVector,PitchAngle,YawAngle)
+    DartBasisX=-[cos(YawAngle);0;-sin(YawAngle)]./norm([cos(YawAngle);0;sin(YawAngle)]);
+    DartBasisZ=[sin(YawAngle);sin(PitchAngle);cos(PitchAngle)]./norm([sin(YawAngle);sin(PitchAngle);cos(PitchAngle)]);
+    DartBasisY=cross(DartBasisX,DartBasisZ);
+    TransformationMatrix=[DartBasisX,DartBasisY,DartBasisZ];
+    f=TransformationMatrix\WorldBasisVector;
+end
+%Convert dart basis vector to world basis
+function p = DartBasisToWorldBasis(DartBasisVector,PitchAngle,YawAngle)
+    DartBasisX=-[cos(YawAngle);0;-sin(YawAngle)]./norm([cos(YawAngle);0;sin(YawAngle)]);
+    DartBasisZ=[sin(YawAngle);sin(PitchAngle);cos(PitchAngle)]./norm([sin(YawAngle);sin(PitchAngle);cos(PitchAngle)]);
+    DartBasisY=cross(DartBasisX,DartBasisZ);
+    TransformationMatrix=[DartBasisX,DartBasisY,DartBasisZ];
+    p=TransformationMatrix*DartBasisVector;
+end
